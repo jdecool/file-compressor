@@ -3,6 +3,7 @@ package compressor
 import (
 	"fmt"
 	"image"
+	"image/png"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,17 +57,46 @@ func (ic *ImageCompressor) CompressFile(filePath string, outputPath string) (*Co
 		srcImage = imaging.Resize(srcImage, 2000, 0, imaging.Lanczos) // 0 means maintain aspect ratio
 	}
 
+	// Determine the output format and ensure correct file extension
+	var imgFormat imaging.Format
+	var encodeOptions []imaging.EncodeOption
+
 	switch strings.ToLower(format) {
 	case "jpeg", "jpg":
+		imgFormat = imaging.JPEG
+		encodeOptions = []imaging.EncodeOption{imaging.JPEGQuality(85)}
 		if !strings.HasSuffix(strings.ToLower(outputPath), ".jpg") && !strings.HasSuffix(strings.ToLower(outputPath), ".jpeg") {
 			outputPath = strings.TrimSuffix(outputPath, filepath.Ext(outputPath)) + ".jpg"
 		}
-	case "png", "gif", "bmp", "tiff", "webp":
-		if !strings.HasSuffix(strings.ToLower(outputPath), ".jpg") && !strings.HasSuffix(strings.ToLower(outputPath), ".jpeg") {
-			outputPath = strings.TrimSuffix(outputPath, filepath.Ext(outputPath)) + ".jpg"
+	case "png":
+		imgFormat = imaging.PNG
+		encodeOptions = []imaging.EncodeOption{imaging.PNGCompressionLevel(png.BestCompression)}
+		if !strings.HasSuffix(strings.ToLower(outputPath), ".png") {
+			outputPath = strings.TrimSuffix(outputPath, filepath.Ext(outputPath)) + ".png"
+		}
+	case "gif":
+		imgFormat = imaging.GIF
+		encodeOptions = []imaging.EncodeOption{imaging.GIFNumColors(256)}
+		if !strings.HasSuffix(strings.ToLower(outputPath), ".gif") {
+			outputPath = strings.TrimSuffix(outputPath, filepath.Ext(outputPath)) + ".gif"
+		}
+	case "bmp":
+		imgFormat = imaging.BMP
+		if !strings.HasSuffix(strings.ToLower(outputPath), ".bmp") {
+			outputPath = strings.TrimSuffix(outputPath, filepath.Ext(outputPath)) + ".bmp"
+		}
+	case "tiff":
+		imgFormat = imaging.TIFF
+		if !strings.HasSuffix(strings.ToLower(outputPath), ".tiff") && !strings.HasSuffix(strings.ToLower(outputPath), ".tif") {
+			outputPath = strings.TrimSuffix(outputPath, filepath.Ext(outputPath)) + ".tiff"
 		}
 	default:
-		// For unknown formats, keep original extension but still compress
+		// For unknown formats, default to JPEG with quality compression
+		imgFormat = imaging.JPEG
+		encodeOptions = []imaging.EncodeOption{imaging.JPEGQuality(85)}
+		if !strings.HasSuffix(strings.ToLower(outputPath), ".jpg") && !strings.HasSuffix(strings.ToLower(outputPath), ".jpeg") {
+			outputPath = strings.TrimSuffix(outputPath, filepath.Ext(outputPath)) + ".jpg"
+		}
 	}
 
 	outFile, err := os.Create(outputPath)
@@ -75,8 +105,7 @@ func (ic *ImageCompressor) CompressFile(filePath string, outputPath string) (*Co
 	}
 	defer outFile.Close()
 
-	options := imaging.JPEGQuality(85)
-	err = imaging.Encode(outFile, srcImage, imaging.JPEG, options)
+	err = imaging.Encode(outFile, srcImage, imgFormat, encodeOptions...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode compressed image: %v", err)
 	}
