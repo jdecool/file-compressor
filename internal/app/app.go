@@ -19,6 +19,7 @@ type Application struct {
 	replaceOriginal bool
 	serviceLocator  *servicelocator.ServiceLocator
 	mimeDetector    *mime.Detector
+	compressionResults []*compressor.CompressionResult
 }
 
 func NewApplication() *Application {
@@ -120,6 +121,7 @@ func (a *Application) Run(inputPaths []string) {
 
 	<-doneChan
 
+	a.printOperationSummary()
 	a.logger.PrintlnVerbose("File compression completed.")
 }
 
@@ -147,7 +149,9 @@ func (a *Application) worker(fileChan <-chan string, wg *sync.WaitGroup) {
 			continue
 		}
 
-		a.compressFile(path, fileInfo)
+		if err := a.compressFile(path, fileInfo); err != nil {
+			a.logger.PrintfError("Error compressing file %s: %v\n", path, err)
+		}
 	}
 }
 
@@ -168,6 +172,9 @@ func (a *Application) compressFile(path string, info os.FileInfo) error {
 		a.logger.PrintfVerbose("Compressed file %s using %T compressor. Original: %d bytes, Compressed: %d bytes, Savings: %s\n",
 			path, compressor, result.OriginalSize, result.CompressedSize, result.SavingsPercentageAsHumanReadable())
 
+		// Store the compression result for summary
+		a.compressionResults = append(a.compressionResults, result)
+
 		if a.replaceOriginal && result.IsPositiveSavings() {
 			if err := a.replaceOriginalFile(path, outputPath); err != nil {
 				return fmt.Errorf("failed to replace original file %s: %v", path, err)
@@ -184,6 +191,60 @@ func (a *Application) compressFile(path string, info os.FileInfo) error {
 	}
 
 	return nil
+}
+
+func (a *Application) printOperationSummary() {
+	totalFiles := len(a.compressionResults)
+	if totalFiles == 0 {
+		a.logger.Println("No files were compressed.")
+		return
+	}
+
+	var totalOriginalSize int64
+	var totalCompressedSize int64
+	var successfulCompressions int
+	var totalSavings int64
+
+	for _, result := range a.compressionResults {
+		totalOriginalSize += result.OriginalSize
+		totalCompressedSize += result.CompressedSize
+		if result.IsPositiveSavings() {
+			successfulCompressions++
+			totalSavings += result.OriginalSize - result.CompressedSize
+		}
+	}
+
+	fmt.Println("\n=== Operation Summary ===")
+	fmt.Printf("Total files processed: %d\n", totalFiles)
+	fmt.Printf("Successfully compressed: %d\n", successfulCompressions)
+	fmt.Printf("Total original size: %s\n", formatSize(totalOriginalSize))
+	fmt.Printf("Total compressed size: %s\n", formatSize(totalCompressedSize))
+
+	if successfulCompressions > 0 {
+		savingsPercentage := float64(totalSavings) / float64(totalOriginalSize) * 100
+		fmt.Printf("Total savings: %s (%.2f%%)\n", formatSize(totalSavings), savingsPercentage)
+	} else {
+		fmt.Println("No space savings achieved.")
+	}
+}
+
+func formatSize(size int64) string {
+	if size < 0 {
+		return "0 B"
+	}
+
+	const unit = 1024
+	if size < unit {
+		return fmt.Sprintf("%d B", size)
+	}
+
+	div, exp := int64(unit), 0
+	for n := size / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+
+	return fmt.Sprintf("%.2f %cB", float64(size)/float64(div), "KMGTPE"[exp])
 }
 
 func GetDefaultWorkersCount() int {
