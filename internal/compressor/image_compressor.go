@@ -9,10 +9,12 @@ import (
 	"strings"
 
 	"github.com/disintegration/imaging"
+	"github.com/jdecool/file-compressor/internal/logger"
 )
 
 type ImageCompressor struct {
 	supportedMimeTypes []string
+	logger             *logger.Logger
 }
 
 func NewImageCompressor() *ImageCompressor {
@@ -26,11 +28,12 @@ func NewImageCompressor() *ImageCompressor {
 			"image/tiff",
 			"image/webp",
 		},
+		logger: logger.NewLogger(false),
 	}
 }
 
 func (ic *ImageCompressor) CompressFile(filePath string, outputPath string) (*CompressionResult, error) {
-	fmt.Printf("Image Compressor: Compressing file %s to %s\n", filepath.Base(filePath), filepath.Base(outputPath))
+	ic.logger.PrintfVerbose("Image Compressor: Compressing file %s to %s\n", filepath.Base(filePath), filepath.Base(outputPath))
 
 	// Get original file size
 	originalFileInfo, err := os.Stat(filePath)
@@ -116,7 +119,7 @@ func (ic *ImageCompressor) CompressFile(filePath string, outputPath string) (*Co
 		return nil, fmt.Errorf("failed to get compressed file info: %v", err)
 	}
 
-	fmt.Printf("Image Compressor: Successfully compressed file to %s\n", outputPath)
+	ic.logger.PrintfVerbose("Image Compressor: Successfully compressed file to %s\n", outputPath)
 
 	return &CompressionResult{
 		OriginalFile:   filePath,
@@ -128,4 +131,8 @@ func (ic *ImageCompressor) CompressFile(filePath string, outputPath string) (*Co
 
 func (ic *ImageCompressor) GetSupportedMimeTypes() []string {
 	return ic.supportedMimeTypes
+}
+
+func (ic *ImageCompressor) SetLogger(logger *logger.Logger) {
+	ic.logger = logger
 }

@@ -1,18 +1,19 @@
 package servicelocator
 
 import (
-	"fmt"
-
 	"github.com/jdecool/file-compressor/internal/compressor"
+	"github.com/jdecool/file-compressor/internal/logger"
 )
 
 type ServiceLocator struct {
 	compressors map[string]compressor.Compressor
+	logger      *logger.Logger
 }
 
 func NewServiceLocator() *ServiceLocator {
 	return &ServiceLocator{
 		compressors: make(map[string]compressor.Compressor),
+		logger:      logger.NewLogger(false),
 	}
 }
 
@@ -21,7 +22,7 @@ func (sl *ServiceLocator) RegisterCompressor(compressor compressor.Compressor) {
 	for _, mimeType := range mimeTypes {
 		sl.compressors[mimeType] = compressor
 		if sl.compressors[mimeType] == nil {
-			fmt.Printf("Registered compressor for mime type: %s\n", mimeType)
+			sl.logger.PrintfVerbose("Registered compressor for mime type: %s\n", mimeType)
 		}
 	}
 }

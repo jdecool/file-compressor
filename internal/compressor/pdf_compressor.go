@@ -5,22 +5,25 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/jdecool/file-compressor/internal/logger"
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 )
 
 type PdfCompressor struct {
 	supportedMimeTypes []string
+	logger             *logger.Logger
 }
 
 func NewPdfCompressor() *PdfCompressor {
 	return &PdfCompressor{
 		supportedMimeTypes: []string{"application/pdf"},
+		logger:             logger.NewLogger(false),
 	}
 }
 
 func (pc *PdfCompressor) CompressFile(filePath string, outputPath string) (*CompressionResult, error) {
-	fmt.Printf("PDF Compressor: Compressing file %s to %s\n", filepath.Base(filePath), filepath.Base(outputPath))
+	pc.logger.PrintfVerbose("PDF Compressor: Compressing file %s to %s\n", filepath.Base(filePath), filepath.Base(outputPath))
 
 	// Get original file size
 	originalFileInfo, err := os.Stat(filePath)
@@ -41,8 +44,8 @@ func (pc *PdfCompressor) CompressFile(filePath string, outputPath string) (*Comp
 		return nil, fmt.Errorf("failed to get compressed file info: %v", err)
 	}
 
-	fmt.Printf("PDF Compressor: Successfully compressed file to %s\n", outputPath)
-	
+	pc.logger.PrintfVerbose("PDF Compressor: Successfully compressed file to %s\n", outputPath)
+
 	return &CompressionResult{
 		OriginalFile:   filePath,
 		CompressedFile: outputPath,
@@ -53,4 +56,8 @@ func (pc *PdfCompressor) CompressFile(filePath string, outputPath string) (*Comp
 
 func (pc *PdfCompressor) GetSupportedMimeTypes() []string {
 	return pc.supportedMimeTypes
+}
+
+func (pc *PdfCompressor) SetLogger(logger *logger.Logger) {
+	pc.logger = logger
 }

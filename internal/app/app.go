@@ -8,12 +8,13 @@ import (
 	"sync"
 
 	"github.com/jdecool/file-compressor/internal/compressor"
+	"github.com/jdecool/file-compressor/internal/logger"
 	"github.com/jdecool/file-compressor/internal/mime"
 	"github.com/jdecool/file-compressor/internal/servicelocator"
 )
 
 type Application struct {
-	isVerbose       bool
+	logger          *logger.Logger
 	maxWorkers      int
 	replaceOriginal bool
 	serviceLocator  *servicelocator.ServiceLocator
@@ -22,7 +23,7 @@ type Application struct {
 
 func NewApplication() *Application {
 	return &Application{
-		isVerbose:       false,
+		logger:          logger.NewLogger(false),
 		maxWorkers:      GetDefaultWorkersCount(),
 		replaceOriginal: false,
 		serviceLocator:  servicelocator.NewServiceLocator(),
@@ -31,11 +32,15 @@ func NewApplication() *Application {
 }
 
 func (a *Application) RegisterCompressor(c compressor.Compressor) {
+	// Set the logger for the compressor if it supports it
+	if setter, ok := c.(interface{ SetLogger(*logger.Logger) }); ok {
+		setter.SetLogger(a.logger)
+	}
 	a.serviceLocator.RegisterCompressor(c)
 }
 
 func (a *Application) SetVerboseMode(isVerbose bool) {
-	a.isVerbose = isVerbose
+	a.logger.SetVerbose(isVerbose)
 }
 
 func (a *Application) SetMaxWorkers(count int) error {
@@ -73,11 +78,9 @@ func (a *Application) replaceOriginalFile(originalPath, compressedPath string) e
 }
 
 func (a *Application) Run(inputPaths []string) {
-	if a.isVerbose {
-		fmt.Println("Starting file compression process...")
-		fmt.Println("Input paths:", inputPaths)
-		fmt.Printf("Using %d workers for parallel processing\n", a.maxWorkers)
-	}
+	a.logger.PrintlnVerbose("Starting file compression process...")
+	a.logger.PrintfVerbose("Input paths: %v\n", inputPaths)
+	a.logger.PrintfVerbose("Using %d workers for parallel processing\n", a.maxWorkers)
 
 	fileChan := make(chan string, 100)
 	doneChan := make(chan bool)
@@ -95,20 +98,18 @@ func (a *Application) Run(inputPaths []string) {
 
 	go func() {
 		for _, path := range inputPaths {
-			if a.isVerbose {
-				fmt.Printf("Processing path: %s\n", path)
-			}
+			a.logger.PrintfVerbose("Processing path: %s\n", path)
 
 			fileInfo, err := os.Stat(path)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error accessing path %s: %v\n", path, err)
+				a.logger.PrintfError("Error accessing path %s: %v\n", path, err)
 				continue
 			}
 
 			if fileInfo.IsDir() {
 				err := a.browseDirectoryAndSendFiles(path, fileChan)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error browsing directory %s: %v\n", path, err)
+					a.logger.PrintfError("Error browsing directory %s: %v\n", path, err)
 				}
 			} else {
 				fileChan <- path
@@ -119,9 +120,7 @@ func (a *Application) Run(inputPaths []string) {
 
 	<-doneChan
 
-	if a.isVerbose {
-		fmt.Println("File compression completed.")
-	}
+	a.logger.PrintlnVerbose("File compression completed.")
 }
 
 func (a *Application) browseDirectoryAndSendFiles(rootPath string, fileChan chan<- string) error {
@@ -144,7 +143,7 @@ func (a *Application) worker(fileChan <-chan string, wg *sync.WaitGroup) {
 	for path := range fileChan {
 		fileInfo, err := os.Stat(path)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error accessing file %s: %v\n", path, err)
+			a.logger.PrintfError("Error accessing file %s: %v\n", path, err)
 			continue
 		}
 
@@ -153,7 +152,7 @@ func (a *Application) worker(fileChan <-chan string, wg *sync.WaitGroup) {
 }
 
 func (a *Application) compressFile(path string, info os.FileInfo) error {
-	fmt.Printf("Found file: %s (Size: %d bytes)\n", path, info.Size())
+	a.logger.PrintfVerbose("Found file: %s (Size: %d bytes)\n", path, info.Size())
 
 	mimeType := a.mimeDetector.DetectMimeType(path)
 
@@ -166,7 +165,7 @@ func (a *Application) compressFile(path string, info os.FileInfo) error {
 			return fmt.Errorf("failed to compress file %s: %v", path, err)
 		}
 
-		fmt.Printf("Compressed file %s using %T compressor. Original: %d bytes, Compressed: %d bytes, Savings: %s\n",
+		a.logger.PrintfVerbose("Compressed file %s using %T compressor. Original: %d bytes, Compressed: %d bytes, Savings: %s\n",
 			path, compressor, result.OriginalSize, result.CompressedSize, result.SavingsPercentageAsHumanReadable())
 
 		if a.replaceOriginal && result.IsPositiveSavings() {
@@ -174,14 +173,14 @@ func (a *Application) compressFile(path string, info os.FileInfo) error {
 				return fmt.Errorf("failed to replace original file %s: %v", path, err)
 			}
 
-			fmt.Printf("Replaced original file %s with compressed version\n", path)
+			a.logger.PrintfVerbose("Replaced original file %s with compressed version\n", path)
 		}
 
 		if a.replaceOriginal {
 			_ = os.Remove(outputPath)
 		}
 	} else {
-		fmt.Printf("No compressor found for file: %s\n", path)
+		a.logger.PrintfVerbose("No compressor found for file: %s\n", path)
 	}
 
 	return nil
