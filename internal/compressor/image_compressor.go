@@ -12,8 +12,6 @@ import (
 	"strings"
 
 	"github.com/disintegration/imaging"
-	exif2 "github.com/dsoprea/go-exif/v3"
-	exifcommon "github.com/dsoprea/go-exif/v3/common"
 	jpegstructure "github.com/dsoprea/go-jpeg-image-structure/v2"
 	"github.com/jdecool/file-compressor/internal/logger"
 	"github.com/rwcarlsen/goexif/exif"
@@ -192,11 +190,24 @@ func (ic *ImageCompressor) compressJPEGWithEXIF(img image.Image, outputPath stri
 
 	sl := intfc.(*jpegstructure.SegmentList)
 
-	// Extract EXIF data from original
-	rootIfd, exifBytes, err := sl.Exif()
-	if err != nil {
-		// No EXIF in original, just save the compressed image
-		ic.logger.PrintfVerbose("Image Compressor: No EXIF segment found in original\n")
+	// Find the EXIF segment from the original
+	var exifSegmentData []byte
+	segments := sl.Segments()
+	for _, segment := range segments {
+		if segment.MarkerName == "APP1" {
+			// Check if this is an EXIF segment (starts with "Exif\x00\x00")
+			if len(segment.Data) >= 6 {
+				if string(segment.Data[0:4]) == "Exif" && segment.Data[4] == 0 && segment.Data[5] == 0 {
+					exifSegmentData = segment.Data
+					break
+				}
+			}
+		}
+	}
+
+	if exifSegmentData == nil {
+		// No EXIF segment found in original
+		ic.logger.PrintfVerbose("Image Compressor: No EXIF APP1 segment found in original\n")
 		return os.WriteFile(outputPath, buf.Bytes(), 0644)
 	}
 
@@ -208,41 +219,41 @@ func (ic *ImageCompressor) compressJPEGWithEXIF(img image.Image, outputPath stri
 
 	newSl := intfc2.(*jpegstructure.SegmentList)
 
-	// Build an IFD builder from the original EXIF data
-	im, err := exifcommon.NewIfdMappingWithStandard()
-	if err != nil {
-		ic.logger.PrintfVerbose("Image Compressor: Could not create IFD mapping: %v\n", err)
+	// Insert the EXIF segment into the compressed image
+	// Find the SOI (Start of Image) marker and insert after it
+	segments2 := newSl.Segments()
+	if len(segments2) < 2 {
+		ic.logger.PrintfVerbose("Image Compressor: Compressed JPEG has too few segments\n")
 		return os.WriteFile(outputPath, buf.Bytes(), 0644)
 	}
 
-	ti := exif2.NewTagIndex()
+	// Create a new segment list with the EXIF segment inserted after SOI
+	newSegments := make([]*jpegstructure.Segment, 0, len(segments2)+1)
+	newSegments = append(newSegments, segments2[0]) // SOI
 
-	// Parse EXIF bytes to get IFD
-	_, index, err := exif2.Collect(im, ti, exifBytes)
-	if err != nil {
-		ic.logger.PrintfVerbose("Image Compressor: Could not parse EXIF data: %v\n", err)
-		return os.WriteFile(outputPath, buf.Bytes(), 0644)
+	// Create new EXIF segment
+	exifSeg := &jpegstructure.Segment{
+		MarkerId:   0xe1, // APP1
+		MarkerName: "APP1",
+		Offset:     0,
+		Data:       exifSegmentData,
 	}
+	newSegments = append(newSegments, exifSeg)
 
-	// Build the IFD from the parsed data
-	ib := exif2.NewIfdBuilderFromExistingChain(index.RootIfd)
-
-	// Set EXIF in the new image
-	err = newSl.SetExif(ib)
-	if err != nil {
-		ic.logger.PrintfVerbose("Image Compressor: Could not set EXIF: %v (using original IFD directly)\n", err)
-		// Try alternative: directly use the root IFD
-		if rootIfd != nil {
-			ib2 := exif2.NewIfdBuilderFromExistingChain(rootIfd)
-			err = newSl.SetExif(ib2)
-			if err != nil {
-				ic.logger.PrintfVerbose("Image Compressor: Could not set EXIF with root IFD either: %v\n", err)
-				return os.WriteFile(outputPath, buf.Bytes(), 0644)
+	// Add remaining segments (skip any existing EXIF segments)
+	for i := 1; i < len(segments2); i++ {
+		seg := segments2[i]
+		// Skip existing APP1/EXIF segments to avoid duplicates
+		if seg.MarkerName == "APP1" {
+			if len(seg.Data) >= 6 && string(seg.Data[0:4]) == "Exif" {
+				continue // Skip existing EXIF
 			}
-		} else {
-			return os.WriteFile(outputPath, buf.Bytes(), 0644)
 		}
+		newSegments = append(newSegments, seg)
 	}
+
+	// Build new segment list
+	newSl2 := jpegstructure.NewSegmentList(newSegments)
 
 	// Write the final JPEG with EXIF to file
 	outputFile, err := os.Create(outputPath)
@@ -251,7 +262,7 @@ func (ic *ImageCompressor) compressJPEGWithEXIF(img image.Image, outputPath stri
 	}
 	defer outputFile.Close()
 
-	err = newSl.Write(outputFile)
+	err = newSl2.Write(outputFile)
 	if err != nil {
 		return fmt.Errorf("failed to write JPEG with EXIF: %v", err)
 	}
